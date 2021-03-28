@@ -1,0 +1,1090 @@
+/**The MIT License (MIT)
+
+Copyright (c) 2018 by Daniel Eichhorn - ThingPulse
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+See more at https://thingpulse.com
+*/
+
+#include <ESP8266WiFi.h>
+#include <ArduinoJson.h>
+WiFiServer server(80); 
+//#include <WiFiManager.h>
+#include <ESPWiFi.h>
+#include <ESP8266HTTPClient.h>
+//#include <ESPHTTPClient.h>
+#include <JsonListener.h>
+#include <Ticker.h>
+#include "RTClib.h"
+// time
+#include <Wire.h>
+ #include <SPI.h>
+#include <SD.h>
+
+#include <Time.h>                       // time() ctime()
+#include <sys/time.h>                   // struct timeval
+#include <coredecls.h>                  // settimeofday_cb()
+#include <Adafruit_Sensor.h>
+#include "SSD1306Wire.h"
+#include "OLEDDisplayUi.h"
+#include "OpenWeatherMapCurrent.h"
+#include "OpenWeatherMapForecast.h"
+#include "WeatherStationFonts.h"
+#include "WeatherStationImages.h"
+#include <ESP8266WebServer.h>
+#include "TimeClient.h"
+#include "ThingspeakClient.h"
+//#include <Wire.h> 
+//#include "cactus_io_BME280_I2C.h" 
+#include "Adafruit_Sensor.h"
+#include "Adafruit_BME280.h"
+Adafruit_BME280 bme;
+// flag changed in the ticker function every 10 minutes
+bool readyForWeatherUpdate = false;
+// flag changed in the ticker function every 1 minute
+bool readyForBMP280Update = false;
+//flag change ifttt in the ticker function every 1 minute
+bool readyForLineUpdate =false;
+//////////////////////////////
+bool readyForLineUpdate1 = true;
+// Create BME280 object 
+//BME280_I2C bme; // I2C using address 0x77 
+//BME280_I2C bme(0x76); // I2C using address 0x76 
+/***************************
+ * Begin Settings
+ **************************/
+const int sensorMin = 0;     // sensor minimum
+const int sensorMax = 1024;  // sensor maximum
+// WIFI
+const char* WIFI_SSID = "METL105";    
+const char* WIFI_PWD = "33669821";
+
+#define TZ              7       // (utc+) TZ in hours
+#define DST_MN          60      // use 60mn for summer time in some countries
+#define HOST    "api.thingspeak.com" // ThingSpeak IP Address: 184.106.153.149
+#define PORT    80
+// Setup
+const int UPDATE_INTERVAL_SECS = 10 * 60; // Update every 20 minutes
+const int interval = 60;
+// Display Settings
+const int I2C_DISPLAY_ADDRESS = 0x3c;
+#if defined(ESP8266)
+const int SDA_PIN = D4;
+const int SDC_PIN = D3;
+#else
+const int SDA_PIN = D14; //D3;
+const int SDC_PIN = D15; //D4;
+#endif
+
+
+
+// OpenWeatherMap Settings
+// Sign up here to get an API key:
+// https://docs.thingpulse.com/how-tos/openweathermap-key/
+const boolean IS_METRIC = true;
+String OPEN_WEATHER_MAP_APP_ID = "3bc6456ec3fd43c489568bb0d43b536f";
+String OPEN_WEATHER_MAP_LOCATION = "Taipei,TW";
+
+// Pick a language code from this list:
+// Arabic - ar, Bulgarian - bg, Catalan - ca, Czech - cz, German - de, Greek - el,
+// English - en, Persian (Farsi) - fa, Finnish - fi, French - fr, Galician - gl,
+// Croatian - hr, Hungarian - hu, Italian - it, Japanese - ja, Korean - kr,
+// Latvian - la, Lithuanian - lt, Macedonian - mk, Dutch - nl, Polish - pl,
+// Portuguese - pt, Romanian - ro, Russian - ru, Swedish - se, Slovak - sk,
+// Slovenian - sl, Spanish - es, Turkish - tr, Ukrainian - ua, Vietnamese - vi,
+// Chinese Simplified - zh_cn, Chinese Traditional - zh_tw.
+
+String OPEN_WEATHER_MAP_LANGUAGE = "zh_tw";
+const uint8_t MAX_FORECASTS = 4;
+////////////////////
+const char* host = "maker.ifttt.com";  //Ifttt主機 
+const char* eventName   = "9m88";  //Ifttt觸發條件名稱
+const char* key = "cZGFpPLwDKkJPq8eKzLKkJ";  //Ifttt授權碼
+// Adjust according to your language
+const String WDAY_NAMES[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+const String MONTH_NAMES[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+//Thingspeak Settings
+//char   host[]      = "api.thingspeak.com"; // ThingSpeak address
+String APIkey      = "530724";             // Thingspeak Read Key, works only if a PUBLIC viewable channel
+String APIreadkey  = "S7XTYBJMLB4HRF80";   // Thingspeak Read Key, works only if a PUBLIC viewable channel
+const int httpPort = 80;
+WiFiClient client;
+#define PUBLIC  
+const int chipSelect = D10;
+File dataFile;
+const unsigned long HTTP_TIMEOUT = 10000;  // max respone time from server
+/////////////////////
+RTC_DS3231 rtc;
+char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+/////////////////////////
+const String THINGSPEAK_CHANNEL_ID = "409890";
+const String THINGSPEAK_API_READ_KEY = "V7HFGWJQJOR5O2Y2";
+/***************************
+ * End Settings
+ **************************/
+ // Initialize the oled display for address 0x3c
+ // sda-pin=14 and sdc-pin=12
+ 
+ SSD1306Wire     display(I2C_DISPLAY_ADDRESS, SDA_PIN, SDC_PIN);
+ OLEDDisplayUi   ui( &display );
+
+OpenWeatherMapCurrentData currentWeather;
+OpenWeatherMapCurrent currentWeatherClient;
+
+OpenWeatherMapForecastData forecasts[MAX_FORECASTS];
+OpenWeatherMapForecast forecastClient;
+
+#define TZ_MN           ((TZ)*60)
+#define TZ_SEC          ((TZ)*3600)
+#define DST_SEC         ((DST_MN)*60)
+time_t now;
+char FormattedTemperature[10];
+char FormattedHumidity[10];
+// 使用 GET 傳送資料的格式
+//GET /update?key=YZCSM8RQ0LRR595FYZC]&field1=[data 1]&filed2=[data 2]...;
+String GET = "https://api.thingspeak.com/update?api_key=4C2WA2TPRNPY88C5";
+float temperature, humidity ,P,range,tempC,pressureHectoPascals,
+sensorReading;  
+
+ThingspeakClient thingspeak;
+
+// flag changed in the ticker function every 10 minutes
+String lastUpdate = "--";
+
+long timeSinceLastWUpdate = 0;
+Ticker ticker;
+Ticker dicker;
+Ticker picker;
+Ticker gicker;
+////////////////////////////////////////////////////////////////////////
+//declaring prototypes  這邊是螢幕顯示的設定
+void drawProgress(OLEDDisplay *display, int percentage, String label);
+void updateData(OLEDDisplay *display);
+void drawDateTime(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
+void drawCurrentWeather(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
+void drawForecast(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);
+void drawForecastDetails(OLEDDisplay *display, int x, int y, int dayIndex);
+void drawHeaderOverlay(OLEDDisplay *display, OLEDDisplayUiState* state);     
+///////////////////////////////////////////////////////////////////////////
+void setReadyForWeatherUpdate();
+void drawIndoor(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y); //顯示感測器讀值
+void drawThingspeak(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y);//抓thingspeak讀值顯示
+void drawSVM(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y); // svm 呈現
+void  updateBMP280(); //更新bmp280
+void updataALL(); // 上傳thingspeak
+void IFTTT();
+int flag=0;
+// Add frames
+// this array keeps function pointers to all frames
+// frames are the single views that slide from right to left
+FrameCallback frames[] = { drawDateTime ,drawCurrentWeather, drawForecast,drawIndoor,drawThingspeak,drawSVM};
+int numberOfFrames = 6;
+
+OverlayCallback overlays[] = { drawHeaderOverlay };
+int numberOfOverlays = 1;
+//RTCDateTime dt;
+//DS3231 clock;
+void setup() {
+  Serial.begin(115200);
+    Serial.println("Initialize DS3231");;
+//  clock.begin();
+
+  // Set sketch compiling time
+  //clock.setDateTime(__DATE__, __TIME__);
+   if(bme.begin())
+  {
+   // Serial.println("Could not find a valid BME280 sensor, check wiring!");
+    
+  Serial.println( "ESP8266 Ready!" );
+    // Connecting to a WiFi network
+    Serial.print("Connect to ");
+    Serial.println( WIFI_SSID );
+    WiFi.begin( WIFI_SSID, WIFI_PWD );
+
+    // 持續等待並連接到指定的 WiFi SSID
+  /*  while( WiFi.status() != WL_CONNECTED )
+    {
+        delay(500);
+        Serial.print( "." );
+    }*/
+    Serial.println( "" );
+
+    Serial.println( "WiFi connected" );
+    Serial.println( "IP address: " );
+    Serial.println( WiFi.localIP() );
+    Serial.println( "" );
+    Serial.println();
+    Serial.println();
+    
+  //////////////////////////
+   if (! rtc.begin()) {
+    Serial.println("Couldn't find RTC");
+    while (1);
+  }
+
+if (rtc.lostPower()) {
+    Serial.println("RTC lost power, lets set the time!");
+    // following line sets the RTC to the date & time this sketch was compiled
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    // This line sets the RTC with an explicit date & time, for example to set
+    // January 21, 2014 at 3am you would call:
+     rtc.adjust(DateTime(2019,3,3,23,23,0));
+  }
+  /*Serial.println("Bosch BME280 Pressure - Humidity - Temp Sensor | cactus.io"); 
+
+  if (!bme.begin()) { 
+  Serial.println("Could not find a valid BME280 sensor, check wiring!"); 
+  while (1); 
+} 
+
+  bme.setTempCal(-1);// Temp was reading high so subtract 1 degree 
+
+  Serial.println("Pressure\tHumdity\t\tTemp\ttTemp"); 
+ 
+*/
+  // initialize dispaly
+  display.init();
+  display.clear();
+  display.display();
+
+  display.flipScreenVertically();
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_CENTER);
+  display.setContrast(255);
+/*
+ //WiFiManager
+  //Local intialization. Once its business is done, there is no need to keep it around
+  WiFiManager wifiManager;
+  // Uncomment for testing wifi manager
+  //wifiManager.resetSettings();
+  wifiManager.setAPCallback(configModeCallback);
+    //or use this for auto generated name ESP + ChipID
+  wifiManager.autoConnect();*/
+  
+ WiFi.begin(WIFI_SSID, WIFI_PWD);
+
+  int counter = 0;{
+ // while (WiFi.status() != WL_CONNECTED) {{
+    delay(500);
+    Serial.print(".");
+    display.clear();
+    display.drawString(64, 10, "Connecting to WiFi");
+    display.drawXbm(46, 30, 8, 8, counter % 3 == 0 ? activeSymbole : inactiveSymbole);
+    display.drawXbm(60, 30, 8, 8, counter % 3 == 1 ? activeSymbole : inactiveSymbole);
+    display.drawXbm(74, 30, 8, 8, counter % 3 == 2 ? activeSymbole : inactiveSymbole);
+    display.display();
+
+    counter++;
+  }
+  // Get time from network time service
+  configTime(TZ_SEC, DST_SEC, "pool.ntp.org");
+
+  ui.setTargetFPS(30);
+ 
+  ui.setActiveSymbol(activeSymbole);
+  ui.setInactiveSymbol(inactiveSymbole);
+  ui.disableIndicator();
+  // You can change this to
+  // TOP, LEFT, BOTTOM, RIGHT
+  //ui.setIndicatorPosition(BOTTOM);
+
+  // Defines where the first frame is located in the bar.
+ // ui.setIndicatorDirection(LEFT_RIGHT);
+
+  // You can change the transition that is used
+  // SLIDE_LEFT, SLIDE_RIGHT, SLIDE_TOP, SLIDE_DOWN
+  ui.setFrameAnimation(SLIDE_LEFT);
+
+  ui.setFrames(frames, numberOfFrames);
+
+  ui.setOverlays(overlays, numberOfOverlays);
+
+  // Inital UI takes care of initalising the display too.
+  ui.init();
+
+  Serial.println("");
+
+  updateData(&display);
+  picker.attach(UPDATE_INTERVAL_SECS, setReadyForWeatherUpdate);
+  ticker.attach(600, setReadyForBMP280Update);
+  dicker.attach(60,setReadyForLineUpdate);
+  gicker.attach(600,setReadyForLineUpdate1);
+  ////////////////////////////////////////////////
+   Serial.print("Initializing SD card...");
+
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    return;
+  }
+  Serial.println("card initialized.");
+  dataFile = SD.open("datalog.txt", FILE_WRITE);
+  if (! dataFile) {
+    Serial.println("error opening datalog.txt");
+    // Wait forever since we cant write data
+    while (1) ;
+}
+
+
+}
+}
+
+void loop() {
+
+
+
+  if (readyForWeatherUpdate && ui.getUiState()->frameState == FIXED) {
+    updateData(&display); //開機時畫面
+   
+  }
+   if (readyForBMP280Update && ui.getUiState()->frameState == FIXED){
+    updateBMP280(); //  感測器值更新
+    RTCSDcard();} // SD卡上傳
+    IFTTT();
+
+  /*if(readyForLineUpdate && ui.getUiState()->frameState == FIXED) 
+   IFTTT();*/
+   if(readyForLineUpdate1 && readyForLineUpdate && ui.getUiState()->frameState == FIXED){ 
+    IFTTT();}
+  int remainingTimeBudget = ui.update();
+  
+
+  if (remainingTimeBudget > 0) {
+      //IFTTT();
+    // You can do some work here
+    // Don't do stuff if you are below your
+    // time budget.
+    delay(remainingTimeBudget);
+  }}
+
+
+
+
+void drawProgress(OLEDDisplay *display, int percentage, String label) {
+  display->clear();
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->setFont(ArialMT_Plain_10);
+  display->drawString(64, 10, label);
+  display->drawProgressBar(2, 28, 124, 10, percentage);
+  display->display();
+}
+
+void updateData(OLEDDisplay *display) {
+  drawProgress(display, 10, "Updating time...");
+  drawProgress(display, 30, "Updating weather...");
+  currentWeatherClient.setMetric(IS_METRIC);
+  currentWeatherClient.setLanguage(OPEN_WEATHER_MAP_LANGUAGE);
+  currentWeatherClient.updateCurrent(&currentWeather, OPEN_WEATHER_MAP_APP_ID, OPEN_WEATHER_MAP_LOCATION);
+  drawProgress(display, 50, "Updating forecasts...");
+  float tempC = bme.readTemperature();
+  Serial.println(tempC);
+  float humidity = bme.readHumidity();
+   Serial.println(humidity);
+  float pressurePascals = bme.readPressure();
+   Serial.println(pressurePascals);
+  forecastClient.setMetric(IS_METRIC);
+  forecastClient.setLanguage(OPEN_WEATHER_MAP_LANGUAGE);
+  uint8_t allowedHours[] = {12};
+  forecastClient.setAllowedHours(allowedHours, sizeof(allowedHours));
+  forecastClient.updateForecasts(forecasts, OPEN_WEATHER_MAP_APP_ID, OPEN_WEATHER_MAP_LOCATION, MAX_FORECASTS);
+  drawProgress(display, 80, "Updating thingspeak...");
+  //thingspeak.getLastChannelItem(THINGSPEAK_CHANNEL_ID, THINGSPEAK_API_READ_KEY);
+  //Serial.print(thingspeak.getCreatedAt()+" 6 ");
+  //Serial.print(thingspeak.getFieldLabel(1));
+   //Serial.print(thingspeak.getFieldValue(1));
+  readyForWeatherUpdate = false;
+  drawProgress(display, 100, "Done...");
+}
+
+
+
+void drawDateTime(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
+  now = time(nullptr);
+  struct tm* timeInfo;
+  timeInfo = localtime(&now);
+  char buff[16];
+
+
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->setFont(ArialMT_Plain_10);
+  String date = WDAY_NAMES[timeInfo->tm_wday];
+
+  sprintf_P(buff, PSTR("%s, %02d/%02d/%04d"), WDAY_NAMES[timeInfo->tm_wday].c_str(), timeInfo->tm_mday, timeInfo->tm_mon+1, timeInfo->tm_year + 1900);
+  display->drawString(64 + x, 5 + y, String(buff));
+  display->setFont(ArialMT_Plain_24);
+
+  sprintf_P(buff, PSTR("%02d:%02d:%02d"), timeInfo->tm_hour, timeInfo->tm_min, timeInfo->tm_sec);
+  display->drawString(64 + x, 15 + y, String(buff));
+  display->setTextAlignment(TEXT_ALIGN_LEFT);
+}
+
+void drawCurrentWeather(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
+  display->setFont(ArialMT_Plain_10);
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->drawString(64 + x, 38 + y, currentWeather.description);
+
+  display->setFont(ArialMT_Plain_10);
+  display->setTextAlignment(TEXT_ALIGN_LEFT);
+  String temp = ("T : ")+String(currentWeather.temp, 1) + (IS_METRIC ? "°C" : "°F");
+  display->drawString(60 + x, 5 + y, temp);
+  String humi =("H : ")+String(currentWeather.humidity) + (IS_METRIC ? "%" : "");
+  display->drawString(60 + x, 15 + y, humi);
+
+  String pressure = ("P : ")+String(currentWeather.pressure) + (IS_METRIC ? "hpa" : "");
+    display->drawString(60 + x, 25 + y, pressure);
+    
+      String wind = ("W : ")+String(currentWeather.windSpeed) + (IS_METRIC ? "m/s" : "");
+    display->drawString(60 + x, 35 + y, wind);
+
+  String main =   String(currentWeather.main) ;
+  display->drawString(16 + x, 36 + y, main);
+
+  display->setFont(Meteocons_Plain_36);
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->drawString(32 + x, 0 + y, currentWeather.iconMeteoCon);
+}
+
+
+void drawForecast(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
+  drawForecastDetails(display, x, y, 0);
+  drawForecastDetails(display, x + 44, y, 1);
+  drawForecastDetails(display, x + 88, y, 2);
+}
+
+void drawForecastDetails(OLEDDisplay *display, int x, int y, int dayIndex) {
+  time_t observationTimestamp = forecasts[dayIndex].observationTime;
+  struct tm* timeInfo;
+  timeInfo = localtime(&observationTimestamp);
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->setFont(ArialMT_Plain_10);
+  display->drawString(x + 20, y, WDAY_NAMES[timeInfo->tm_wday]);
+
+  display->setFont(Meteocons_Plain_21);
+  display->drawString(x + 20, y + 12, forecasts[dayIndex].iconMeteoCon);
+  String temp = String(forecasts[dayIndex].temp, 0) + (IS_METRIC ? "°C" : "°F");
+  display->setFont(ArialMT_Plain_10);
+  display->drawString(x + 20, y + 34, temp);
+  display->setTextAlignment(TEXT_ALIGN_LEFT);
+}
+
+void drawHeaderOverlay(OLEDDisplay *display, OLEDDisplayUiState* state) {
+  now = time(nullptr);
+  struct tm* timeInfo;
+  timeInfo = localtime(&now);
+  char buff[14];
+  sprintf_P(buff, PSTR("%02d:%02d"), timeInfo->tm_hour, timeInfo->tm_min);
+
+  display->setColor(WHITE);
+  display->setFont(ArialMT_Plain_10);
+  display->setTextAlignment(TEXT_ALIGN_LEFT);
+  display->drawString(0, 54, String(buff));
+  display->setTextAlignment(TEXT_ALIGN_RIGHT);
+  String temp = String(currentWeather.temp, 1) + (IS_METRIC ? "°C" : "°F");
+  display->drawString(128, 54, temp);
+  display->drawHorizontalLine(0, 52, 128);
+}
+
+void setReadyForWeatherUpdate() {
+  Serial.println("Setting readyForUpdate to true");
+  readyForWeatherUpdate = true;
+}
+
+void drawThingspeak(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  //display->setFont(ArialMT_Plain_10);
+  //display->drawString(20 + x, 0 + y, "Sensor ");
+  display->setFont(ArialMT_Plain_16);
+   DateTime now = rtc.now();
+    
+    String s1,s2,s3,s4,s5,s6,s7,s8;
+  if((now.hour())<10)
+    s1 = String('0'+String(now.hour()));
+  else
+    s1 = String(now.hour());
+  if(now.minute()<10)
+    s2 = String('0'+String(now.minute()));
+  else
+    s2 = String(now.minute());
+  if(now.second()<10)
+    s3 = String('0'+String(now.second()));
+ else
+    s3 = String(now.second());
+  if(now.day()<10)
+    s4 = String('0'+String(now.day()));
+ else
+    s4 = String(now.day());
+  if(now.month()<10)
+    s5 = String('0'+String(now.month()));
+ else
+    s5 = String(now.month());
+  s6 = String(now.year());
+    s7 =String("Date: "+s6 +"/"+s5+"/"+s4);
+    s8= String("Time: "+s1+":"+s2+":"+s3);
+      display->setFont(ArialMT_Plain_10);
+//if (SD.begin(chipSelect)) {
+  // Serial.println("//////card initialized.////");
+  display->drawString(40 + x, 0 + y,"SD card:   Done ");
+  //display->drawString(50+ x,  20+ y,"Done  ");}
+  //else{
+   // Serial.println("//////card not present.////");
+  //display->drawString(40 + x, 0 + y,"SD card:   Fail");
+ // display->drawString(50 + x, 10 + y,"Fail ");
+  //}
+  
+  display->setFont(ArialMT_Plain_10);
+  display->drawString(60 + x, 20 + y,s7);
+  /* display->drawString(60 + x, 20 + y," /");
+    display->drawString(60 + x, 20 + y,s5);
+    display->drawString(80 + x, 20 + y," /");
+    display->drawString(100 + x, 20 + y,s4);*/
+    display->drawString(60 + x, 30 + y,s8);}
+ /* display->drawString(40 + x, 40 + y," :");
+   display->drawString(60 + x, 40 + y,s2);
+   display->drawString(80 + x, 40 + y," :");
+   display->drawString(100 + x, 40 + y,s3);}
+   /*display->drawString(70 + x, 20 + y,"P: "+ thingspeak.getFieldValue(2) + " hpq");
+   display->drawString(70 + x, 30 + y,"SensorReading: "+ thingspeak.getFieldValue(3) + " ");*/
+//display->drawString(70 + x, 0 + y,"TIME: "+ thingspeak.getCreatedAt() + " ");
+void updateBMP280()
+{ updateALL();
+  //Serial.print("雨滴感測器:  ");
+ // Serial.println(sensorReading);
+//bme.readSensor();
+/*temperature = bme.getTemperature_C();
+Serial.print(temperature);
+Serial.print(" *C\t");
+humidity = bme.getHumidity(); 
+Serial.print(humidity);
+Serial.print("  %\t");
+P = bme.getPressure_MB(); 
+Serial.print(P);
+Serial.print(" mb\t");  */   
+readyForBMP280Update = false;
+Serial.println("Setting readyForBMP280Update to false") ;
+Serial.println( "Update To Thingspeak ");
+//thingspeak.getLastChannelItem(THINGSPEAK_CHANNEL_ID, THINGSPEAK_API_READ_KEY);
+Serial.println(" SD  Card Done ");
+}
+void updateALL()
+{
+ const float tempC = bme.readTemperature();
+ const     float humidity = bme.readHumidity();
+ const     float pressurePascals = bme.readPressure();
+      float pressureHectoPascals = pressurePascals/ 100.0;
+      printToSerial(tempC, humidity, pressurePascals);
+ const     int sensorReading = analogRead(A0);
+      // map the sensor range (four options):
+       // ex: 'long int map(long int, long int, long int, long int, long int)'
+       int range = map(sensorReading, sensorMin, sensorMax, 0, 3);
+    // 設定 ESP8266 作為 Client 端*/
+    HTTPClient http;
+  //  WiFiClient client;
+    if( !client.connect( HOST, PORT ) )
+    {
+        Serial.println( "connection failed" );
+        return;
+    }
+    else
+    { 
+        // 準備上傳到 ThingSpeak IoT Server 的資料
+        // 已經預先設定好 ThingSpeak IoT Channel 的欄位
+        // field1：溫度；field2：濕度
+        String getStr = GET + "&field1=" + String((float)tempC)+ 
+                              "&field2=" + String((float)humidity) +
+                              "&field3=" + String((float)pressureHectoPascals)+
+                              "&field4=" + String((float)sensorReading);
+                            // " HTTP/1.1\r\n";*/
+          Serial.println(getStr);
+           http.begin(getStr,"F9:C2:65:6C:F9:EF:7F:66:8B:F7:35:FE:15:EA:82:9F:5F:55:54:3E");
+           
+  //      client.print( getStr );
+  //      client.print( "Host: api.thingspeak.com\n" );
+  //      client.print( "Connection: close\r\n\r\n" );
+        
+          delay(100);
+        //
+        // 處理遠端伺服器回傳的訊息，程式碼可以寫在這裡！
+        //
+       int httpCode = http.GET();                                                                  //Send the request
+     //  Serial.println(httpCode);
+       if (httpCode > 0) { //Check the returning code
+       Serial.println(httpCode);
+       String payload = http.getString();   //Get the request response payload
+       //Serial.println(payload);    
+        Serial.println(payload);
+        Serial.print("Thingspeak Done");
+
+       // client.stop();
+    }
+}
+}
+ 
+void printToSerial(float tempC, float humidity, float pressurePascals)
+{
+    // Temperature
+    float tempF = 9.0/5.0 * tempC + 32.0;
+
+    Serial.println("Temperature:");
+    printValueAndUnits(tempC, "*C");
+    printValueAndUnits(tempF, "*F");
+    //printValueAndUnits(tempC, "°C");
+    //printValueAndUnits(tempF, "°F");
+    Serial.println("");
+
+    // Barometric pressure
+    float pressureHectoPascals = pressurePascals / 100.0;
+    float pressureInchesOfMercury = 0.000295299830714 * pressurePascals;
+
+    Serial.println("Pressure:");
+    printValueAndUnits(pressurePascals, "Pa");
+    printValueAndUnits(pressureHectoPascals, "hPa");
+    printValueAndUnits(pressureInchesOfMercury, "inHg");
+    Serial.println("");
+
+    // Humidity
+    Serial.println("Humidity:");
+    printValueAndUnits(humidity, "%");
+    Serial.println("");
+
+    // Approximate altitude
+//    float altitudeMeters = bme.readAltitude(SEA_LEVEL_PRESSURE_HPA);
+  //  float altitudeFeet = 3.28 * altitudeMeters;
+    
+   // Serial.println("Approx. Altitude:");
+//    printValueAndUnits(altitudeMeters, "m");
+//    printValueAndUnits(altitudeFeet, "ft");
+    Serial.println();
+}
+
+void printValueAndUnits(float value, String units)
+{
+    Serial.print("     ");
+    Serial.print(value);
+    Serial.print(" ");
+    Serial.println(units);
+}
+void setReadyForBMP280Update() {
+  Serial.println("Setting readyForBMP280Update to true");
+  readyForBMP280Update = true;
+}
+void setReadyForLineUpdate() {
+  Serial.println("Setting readyForLineUpdate to true");
+  readyForLineUpdate = true;
+}
+void setReadyForLineUpdate1(){
+   Serial.println("Setting readyForLineUpdate1 to true");
+   readyForLineUpdate1 = true;
+   
+}
+
+void drawIndoor(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y) {
+  const float tempC = bme.readTemperature();
+ const float humidity = bme.readHumidity();
+  float pressurePascals = bme.readPressure();
+  float pressureHectoPascals = pressurePascals / 100.0;
+  //////////////////////////////
+   int sensorReading = analogRead(A0);
+  // map the sensor range (four options):
+  // ex: 'long int map(long int, long int, long int, long int, long int)'
+  //int range = map(sensorReading, sensorMin, sensorMax, 0, 3);
+  //serial
+  /*switch (range) {
+    case 0:    // Sensor getting wet
+      Serial.println("----------有雨");
+      break;
+    case 1:    // Sensor getting wet
+      Serial.println("----------注意:快下雨了");
+      break;
+    case 2:    // Sensor dry - To shut this up delete the " Serial.println("Not Raining"); " below.
+      Serial.println("-----------沒雨");
+      break;*/
+  //////////////////////////
+  display->setTextAlignment(TEXT_ALIGN_CENTER);
+  display->setFont(ArialMT_Plain_10);
+  display->drawString(20 + x, 0, " Indoor" );
+  display->drawString(20 + x, 10, " Sensor" );
+  display->setFont(ArialMT_Plain_10);
+  dtostrf(temperature,4, 1, FormattedTemperature);
+  display->drawString(70+x, 0, "T: " + String(tempC) + (IS_METRIC ? "°C": "°F"));
+  display->drawString(70+x, 10, "H: " + String(humidity) + "%");
+ display->drawString(70+x, 20, "P: " + String(pressureHectoPascals) + "hpa");
+ display->drawString(70+x, 30, "S: " + String(sensorReading) );
+  display->drawString(70+x, 40, "S: " + String(range) + "  Status");
+ }
+
+void IFTTT(){
+    Serial.print("connecting to ");
+   Serial.println(host);
+  WiFiClient client;
+   const int httpPort = 80;
+  if (!client.connect(host, httpPort)) {
+     Serial.println("connection failed");
+    return;
+   }
+ float temperature =  bme.readTemperature();  
+ const float humidity = bme.readHumidity();
+  float pressurePascals = bme.readPressure();
+   int sensorReading = analogRead(A0);
+    float pressureHectoPascals = pressurePascals / 100.0 ;
+  // map the sensor range (four options):
+  // ex: 'long int map(long int, long int, long int, long int, long int)'
+  int range = map(sensorReading, sensorMin, sensorMax, 0, 3);
+  float f =-(humidity*0.2613-161.8316)/0.1386;
+ Serial.println(range);
+  Serial.println(sensorReading);
+   if(2 >= range) {
+   String url = "/trigger/";  //組合觸發網址
+     url += eventName;
+     url += "/with/key/";
+     url += key;
+    // url += "溫度";
+     url += "?value1=";
+     url += "T/H+=+";
+     url += String(temperature)+"/"+String(humidity)+"+";
+     url += "P+=+";
+     url += String(pressureHectoPascals)+"+";
+     url += "SensorReading/State+=+";
+     url += String(sensorReading)+"/"+String(range)+"+";
+      url += "Raining!!!";
+    // url += "?value4=";
+    //url += String(sensorReading);
+  //   url += "?value5=";
+   //  url += String(range);
+    Serial.print("Requesting URL: ");
+    Serial.println(url);
+    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                "Host: " + host + "\r\n" + 
+                "Connection: close\r\n\r\n");
+     int timeout = millis() + 5000;
+     flag++ ;
+     Serial.print("flag: ");
+     Serial.println(flag);
+     while (client.available() == 0) {
+      if (timeout - millis() < 0) {
+        Serial.println("Client Timeout !");
+        client.stop();
+         return;
+      }
+     }}
+     else if (pressureHectoPascals>f){
+      String url = "/trigger/";  //組合觸發網址
+     url += eventName;
+     url += "/with/key/";
+     url += key;
+     url += " SVM Prediction" 
+     url += "溫度";
+     url += "?value1=";
+     url += "T/H+=+";
+     url += String(temperature)+"/"+String(humidity)+"+";
+     url += "P+=+";
+     url += String(pressureHectoPascals)+"+";
+     url += "SensorReading/State+=+";
+     url += String(sensorReading)+"/"+String(range)+"+";
+      url += "Raining!!!";
+    // url += "?value4=";
+    //url += String(sensorReading);
+  //   url += "?value5=";
+   //  url += String(range);
+    Serial.print("Requesting URL: ");
+    Serial.println(url);
+    client.print(String("GET ") + url + " HTTP/1.1\r\n" +
+                "Host: " + host + "\r\n" + 
+                "Connection: close\r\n\r\n");
+     int timeout = millis() + 5000;
+     flag++ ;
+     Serial.print("flag: ");
+     Serial.println(flag);
+     while (client.available() == 0) {
+      if (timeout - millis() < 0) {
+        Serial.println("Client Timeout !");
+        client.stop();
+         return;}}
+     
+     while(client.available()){  //顯示回應訊息
+       String line = client.readStringUntil('\r');
+      Serial.println(line);
+     }
+     if (flag>2){
+      readyForLineUpdate1 = false;
+       Serial.println("Setting readyForLineUpdate1 to false");
+      Serial.println(2222);
+      flag=0;
+     }
+ }
+  readyForLineUpdate = false;
+  Serial.println();
+  Serial.println("closing connection");
+  Serial.println("Setting readyForLineUpdate to false");
+  
+ 
+  ;  //每分鐘一次
+}
+
+
+void RetrieveTSChannelData() {  // Receive data from Thingspeak
+  static char responseBuffer[3*1024]; // Buffer for received data
+  client = server.available(); 
+  if (!client.connect ( HOST, PORT )) { 
+    Serial.println("connection failed"); 
+    return; 
+  } 
+  String url = "/channels/" + APIkey; // Start building API request string
+  //GET /channels/CHANNEL_ID/feeds.json?api_key=<your API key>&results=2
+  #ifdef PRIVATE 
+  url += "/fields/2.json?results12";  // 5 is the results request number, so 5 are returned, 1 woudl return the last result received
+  #else
+  url += "/fields/1234.json?api_key="+APIreadkey+"&results=5";  // 5 is the results request number, so 5 are returned, 1 woudl return the last result received
+  #endif
+  client.print(String("GET ") + url + " HTTP/1.1\r\n" + "Host: " + host + "\r\n" + "Connection: close\r\n\r\n");
+  Serial.println("\n\r"+String("GET ") + url + " HTTP/1.1\r\n" + "Host: " + host + "\r\n" + "Connection: close\r\n\r\n");
+  while (!skipResponseHeaders());                      // Wait until there is some data and skip headers
+  while (client.available()) {                         // Now receive the data
+    String line = client.readStringUntil('\n');
+    if ( line.indexOf('{',0) >= 0 ) {                  // Ignore data that is not likely to be JSON formatted, so must contain a '{'
+      Serial.println(line);                            // Show the text received
+      line.toCharArray(responseBuffer, line.length()); // Convert to char array for the JSON decoder
+      decodeJSON(responseBuffer);                      // Decode the JSON text
+    }
+  }
+  client.stop();
+}
+
+bool skipResponseHeaders() { 
+  char endOfHeaders[] = "\r\n\r\n"; // HTTP headers end with an empty line 
+  client.setTimeout(HTTP_TIMEOUT); 
+  bool ok = client.find(endOfHeaders); 
+  if (!ok) { Serial.println("No response or invalid response!"); } 
+  return ok; 
+} 
+
+bool decodeJSON(char *json) {
+  StaticJsonBuffer <3*1024> jsonBuffer;
+  char *jsonstart = strchr(json, '{'); // Skip characters until first '{' found and ignore length, if present
+  if (jsonstart == NULL) {
+    Serial.println("JSON data missing");
+    return false;
+  }
+  json = jsonstart;
+  JsonObject& root = jsonBuffer.parseObject(json); // Parse JSON
+  if (!root.success()) {
+    Serial.println(F("jsonBuffer.parseObject() failed"));
+    return false;
+  }
+/*  JsonObject& root_data = root["channel"]; // Begins and ends within first set of { }
+  String id   = root_data["id"];
+  String name = root_data["name"];
+  String field1_name = root_data["field1"];
+  String field2_name = root_data["field2"]; // Extracts field name in this example field2 is called 'Temperature'
+  String field3_name = root_data["field3"]; // Extracts field name in this example field3 is called 'Humidity'
+ String field4_name = root_data["field4"];
+  String datetime1   = root_data["created_at"];
+  Serial.println("\n\n Channel id: "+id+" Name: "+ name);
+  Serial.println(" Readings last updated at: "+datetime1);*/
+  
+  for (int result = 4; result < 5; result++){
+    JsonObject& channel = root["feeds"][result]; // Now we can read 'feeds' values and so-on
+    String entry_id     = channel["entry_id"];
+    String field1value  = channel["field1"];
+    String field2value  = channel["field2"];
+    String field3value  = channel["field3"];
+    String field4value  = channel["field4"];
+    String datetime    = channel["created_at"];
+    String dataString  = ("Time: "+datetime+" entry_id: "+entry_id+" Temp: "+field1value+" Humi: "+field2value+" P: "+field3value+" Sensor: "+field4value);
+    //Serial.println(dataString);
+    dataFile.println(dataString);
+    Serial.println(dataString);
+    dataFile.flush();
+  }}
+
+
+ void RTCSDcard(){
+    DateTime now = rtc.now();
+    
+    Serial.print(now.year(), DEC);
+    Serial.print('/');
+    Serial.print(now.month(), DEC);
+    Serial.print('/');
+    Serial.print(now.day(), DEC);
+    Serial.print(" (");
+    Serial.print(daysOfTheWeek[now.dayOfTheWeek()]);
+    Serial.print(") ");
+    Serial.print(now.hour(), DEC);
+    Serial.print(':');
+   // int C= now.minute(), DEC
+    Serial.print( now.minute(), DEC);
+    Serial.print(':');
+    Serial.print(now.second(), DEC);
+    Serial.println();
+    String s1,s2,s3,s4,s5;
+  if((now.hour())<10)
+    s1 = String('0'+String(now.hour()));
+  else
+    s1 = String(now.hour());
+  if(now.minute()<10)
+    s2 = String('0'+String(now.minute()));
+  else
+    s2 = String(now.minute());
+  if(now.second()<10)
+    s3 = String('0'+String(now.second()));
+ else
+    s3 = String(now.second());
+  if(now.day()<10)
+    s4 = String('0'+String(now.day()));
+ else
+    s4 = String(now.day());
+  if(now.month()<10)
+    s5 = String('0'+String(now.month()));
+ else
+    s5 = String(now.month());
+  
+  Serial.println(s1+':'+s2+':'+s3);
+
+    
+  const float tempC = bme.readTemperature();
+ const float humidity = bme.readHumidity();
+  float pressurePascals = bme.readPressure();
+  float pressureHectoPascals = pressurePascals / 100.0;
+  //////////////////////////////
+   int sensorReading = analogRead(A0);
+  // map the sensor range (four options):
+  // ex: 'long int map(long int, long int, long int, long int, long int)'
+  int range = map(sensorReading, sensorMin, sensorMax, 0, 3);
+  String dataString  = ("Temp: "+String(tempC)+" Humi: "+String(humidity)+" P: "+String(pressureHectoPascals)+" Range: "+String(range)+" Sensor: "+String(sensorReading));
+  Serial.println(dataString); 
+ /*   
+    Serial.print(" since midnight 1/1/1970 = ");
+    Serial.print(now.unixtime());
+    Serial.print("s = ");
+    Serial.print(now.unixtime() / 86400L);
+    Serial.println("d");
+    
+    // calculate a date which is 7 days and 30 seconds into the future
+    DateTime future (now + TimeSpan(7,12,30,6));
+    
+    Serial.print(" now + 7d + 30s: ");
+    Serial.print(future.year(), DEC);
+    Serial.print('/');
+    Serial.print(future.month(), DEC);
+    Serial.print('/');
+    Serial.print(future.day(), DEC);
+    Serial.print(' ');
+    Serial.print(future.hour(), DEC);
+    Serial.print(':');
+    Serial.print(future.minute(), DEC);
+    Serial.print(':');
+    Serial.print(future.second(), DEC);
+    Serial.println();
+    
+    Serial.println();*/
+     //dt = clock.getDateTime();
+   //  Serial.print("Time : ");
+  //Serial.println(clock.dateFormat("d-m-Y H:i:s", dt));
+  // 每次更新延遲1秒
+  File dataFile = SD.open("datalog.csv", FILE_WRITE);
+
+  // if the file is available, write to it:
+  if (dataFile) {
+   // dataFile.print(clock.dateFormat("d-m-Y H:i:s", dt));
+   // dataFile.print(" ");
+   dataFile.print(now.year(), DEC);
+    dataFile.print("/");
+     dataFile.print(s5);
+     dataFile.print("/");
+     dataFile.print(s4); 
+     dataFile.print("  ");
+    // dataFile.print(" (");
+    // dataFile.print(daysOfTheWeek[now.dayOfTheWeek()]);
+    //dataFile.print(") ");
+    dataFile.print(s1);
+    dataFile.print(':');
+    dataFile.print(s2);
+    dataFile.print(':');
+    dataFile.print(s3);
+    dataFile.print(" ");
+    dataFile.println(dataString);
+    dataFile.flush();
+      Serial.println(s5+"/"+s4+"  "+s1+':'+s2+':'+s3);
+    // print to the serial port too:
+    Serial.println("////////////////SD card : Done///////////" );
+ //dataFile.flush();  
+  }
+  // if the file isn't open, pop up an error:
+  else {
+    Serial.println("error opening datalog.txt");
+  }
+ }
+        //Serial.println(dataString);
+   //  entry number ["+entry_id+"] had a value of: ");Serial.println(field1value);
+  /*  Serial.print(" Field1 entry number ["+entry_id+"] had a value of: ");Serial.println(field1value);
+    Serial.print(" Field2 entry number ["+entry_id+"] had a value of: ");Serial.println(field2value);
+    Serial.print(" Field3 entry number ["+entry_id+"] had a value of: ");Serial.println(field3value);
+     Serial.print(" Field4 entry number ["+entry_id+"] had a value of: ");Serial.println(field4value);
+     Serial.println(datetime);*/
+    
+
+
+  //Thing speak response to GET request(headers removed) and /result=1:
+  //{"channel":{"id":320098,"name":"Test Channel","latitude":"0.0","longitude":"0.0","field1":"Pressure","field2":"Temperature","field3":"Humidity",
+  //"created_at":"2017-08-21T13:22:12Z","updated_at":"2017-08-26T22:18:16Z","last_entry_id":85},
+  // Second level [0] begins with array pointer [0] and then { } so we need to move down a level
+  //"feeds":[{"created_at":"2017-08-26T22:18:16Z","entry_id":85,"field1":"40"}]}
+  void drawSVM(OLEDDisplay *display, OLEDDisplayUiState* state, int16_t x, int16_t y){
+  const float humidity = bme.readHumidity();
+  float pressurePascals = bme.readPressure();
+  float pressureHectoPascals = pressurePascals / 100.0;
+
+/*  x=random(70,80);
+  y=random(1010,1024);*/
+  // put your main code here, to run repeatedly:
+  //Serial.print("X軸:  ");
+//  Serial.print(x);
+ // Serial.print("  Y軸:");
+//  Serial.print(y);
+//  float f=13.2362*humidity+49.6978;
+float f =-(humidity*0.2613-161.8316)/0.1386;
+//float f =-(x*model2.Beta(1) + model2.Bias)/model2.Beta(2);
+ // Serial.print("  邊界線：");
+  //Serial.print(f);
+ /* if(f>pressureHectoPascals){
+  Serial.println("  F>Y 下雨");}
+  else{
+  Serial.println("  Y>F 無雨");}
+  delay(1000);*/
+  
+  
+/*  display->drawString(20 + x, 0, " Indoor" );
+  display->drawString(20 + x, 10, " Sensor" );
+  display->setFont(ArialMT_Plain_10);
+  dtostrf(temperature,4, 1, FormattedTemperature);
+*/  
+display->setTextAlignment(TEXT_ALIGN_CENTER);
+display->setFont(ArialMT_Plain_10);
+display->drawString(70+x, 10, "P: " + String(f));
+display->drawString(70+x, 20, "Y: "+ String(pressureHectoPascals));
+display->drawString(70+x, 30, "If (Y>P) Raning") ;
+display->drawString(70+x, 40, "If (P>Y) Not Raining" );
+//display->drawString(70+x, 20, "P: "+ String(pressureHectoPascals);}
+if(f>pressureHectoPascals){
+display->drawString(70+x, 0, "SVM: Predict Raining");}
+else{
+display->drawString(70+x, 0, "SVM: Predict Not Raining");}
+}
+ 
